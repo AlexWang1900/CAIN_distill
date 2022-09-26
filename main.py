@@ -15,7 +15,7 @@ import utils
 from loss import Loss
 
 
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 ##### Parse CmdLine Arguments #####
 args, unparsed = config.get_args()
