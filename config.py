@@ -46,12 +46,12 @@ learn_arg.add_argument('--fix_loaded', action='store_true', help='whether to fix
 # Misc
 misc_arg = add_argument_group('Misc')
 misc_arg.add_argument('--exp_name', type=str, default='exp')
-misc_arg.add_argument('--log_iter', type=int, default=20)
+misc_arg.add_argument('--log_iter', type=int, default=100)
 misc_arg.add_argument('--log_dir', type=str, default='logs')
 misc_arg.add_argument('--data_dir', type=str, default='data')
 misc_arg.add_argument('--num_gpu', type=int, default=1)
 misc_arg.add_argument('--random_seed', type=int, default=12345)
-misc_arg.add_argument('--num_workers', type=int, default=5)
+misc_arg.add_argument('--num_workers', type=int, default=2)#0 ,1
 misc_arg.add_argument('--use_tensorboard', action='store_true')
 misc_arg.add_argument('--viz', action='store_true', help='whether to save images')
 misc_arg.add_argument('--lpips', action='store_true', help='evaluates LPIPS if set true')

@@ -3,6 +3,7 @@
 CUDA_VISIBLE_DEVICES=0 python main.py \
     --exp_name CAIN_train \
     --dataset vimeo90k \
+    --data_root  ./data/vimeo_triplet \
     --batch_size 16 \
     --test_batch_size 16 \
     --model cain \

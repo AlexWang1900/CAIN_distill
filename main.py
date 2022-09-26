@@ -15,6 +15,8 @@ import utils
 from loss import Loss
 
 
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
+
 ##### Parse CmdLine Arguments #####
 args, unparsed = config.get_args()
 cwd = os.getcwd()
@@ -47,15 +49,36 @@ if args.model.lower() == 'cain_encdec':
 elif args.model.lower() == 'cain':
     from model.cain import CAIN
     print("Building model: CAIN")
-    model = CAIN(depth=args.depth)
+    
+    t_net = CAIN(depth=args.depth)
+    
+    state = torch.load("./pretrain/pretrained_cain.pth")
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    print(state.keys())
+    for k, v in state['state_dict'].items():
+        name = k[7:] # remove `module.`，表面从第7个key值字符取到最后一个字符，正好去掉了module.
+        new_state_dict[name] = v #新字典的key值对应的value为一一对应的值。 
+    t_net.load_state_dict(new_state_dict)
+    
+    s_net = CAIN(depth=args.depth,n_resgroups =5, n_resblocks = 3)
+    s_net.load_state_dict(new_state_dict,strict = False)
 elif args.model.lower() == 'cain_noca':
     from model.cain_noca import CAIN_NoCA
     print("Building model: CAIN_NoCA")
     model = CAIN_NoCA(depth=args.depth)
 else:
     raise NotImplementedError("Unknown model!")
+    
 # Just make every model to DataParallel
-model = torch.nn.DataParallel(model).to(device)
+from model.cain import Distiller
+d_net = Distiller(t_net,s_net)
+
+t_net = torch.nn.DataParallel(t_net).to(device)
+s_net = torch.nn.DataParallel(s_net).to(device)
+d_net = torch.nn.DataParallel(d_net).to(device)
+
+#model = torch.nn.DataParallel(model).to(device)
 #print(model)
 
 ##### Define Loss & Optimizer #####
@@ -64,16 +87,16 @@ criterion = Loss(args)
 args.radam = False
 if args.radam:
     from radam import RAdam
-    optimizer = RAdam(model.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+    optimizer = RAdam(list(s_net.parameters()) + list(d_net.module.Connectors.parameters()), lr=args.lr, betas=(args.beta1, args.beta2))
 else:
     from torch.optim import Adam
-    optimizer = Adam(model.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
-print('# of parameters: %d' % sum(p.numel() for p in model.parameters()))
+    optimizer = Adam(list(s_net.parameters()) + list(d_net.module.Connectors.parameters()), lr=args.lr, betas=(args.beta1, args.beta2))#+ list(d_net.module.Connectors.parameters()
+print('# of parameters: %d' % sum(p.numel() for p in s_net.parameters()))
 
 
 # If resume, load checkpoint: model + optimizer
 if args.resume:
-    utils.load_checkpoint(args, model, optimizer)
+    utils.load_checkpoint(args, s_net, optimizer)
 
 # Learning Rate Scheduler
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -90,7 +113,11 @@ LOSS_0 = 0
 def train(args, epoch):
     global LOSS_0
     losses, psnrs, ssims, lpips = utils.init_meters(args.loss)
-    model.train()
+    
+    s_net.train()
+    d_net.train()
+    t_net.eval()
+    
     criterion.train()
 
     t = time.time()
@@ -101,9 +128,10 @@ def train(args, epoch):
 
         # Forward
         optimizer.zero_grad()
-        out, feats = model(im1, im2)
-        loss, loss_specific = criterion(out, gt, None, feats)
-
+        out, loss_distill = d_net(im1, im2)
+        loss, loss_specific = criterion(out, gt, None, None)
+        loss = loss + loss_distill.sum() / args.batch_size *1e-5#/ 10000
+        
         # Save loss values
         for k, v in losses.items():
             if k != 'total':
@@ -114,18 +142,18 @@ def train(args, epoch):
 
         # Backward (+ grad clip) - if loss explodes, skip current iteration
         loss.backward()
-        if loss.data.item() > 10.0 * LOSS_0:
-            print(max(p.grad.data.abs().max() for p in model.parameters()))
-            continue
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
+        #if loss.data.item() > 10.0 * LOSS_0:
+        #    print(max(p.grad.data.abs().max() for p in model.parameters()))
+        #    continue
+        torch.nn.utils.clip_grad_norm_(d_net.parameters(), 0.1)
         optimizer.step()
 
         # Calc metrics & print logs
         if i % args.log_iter == 0:
             utils.eval_metrics(out, gt, psnrs, ssims, lpips, lpips_model)
 
-            print('Train Epoch: {} [{}/{}]\tLoss: {:.6f}\tPSNR: {:.4f}\tTime({:.2f})'.format(
-                epoch, i, len(train_loader), losses['total'].avg, psnrs.avg, time.time() - t))
+            print('Train Epoch: {} [{}/{}]\tLoss: {:.6f}\tPSNR: {:.4f}\tTime({:.2f})\tLr {}'.format(
+                epoch, i, len(train_loader), losses['total'].avg, psnrs.avg, time.time() - t,optimizer.param_groups[0]['lr']))
             
             # Log to TensorBoard
             utils.log_tensorboard(writer, losses, psnrs.avg, ssims.avg, lpips.avg,
@@ -139,7 +167,7 @@ def train(args, epoch):
 def test(args, epoch, eval_alpha=0.5):
     print('Evaluating for epoch = %d' % epoch)
     losses, psnrs, ssims, lpips = utils.init_meters(args.loss)
-    model.eval()
+    s_net.eval()
     criterion.eval()
 
     save_folder = 'test%03d' % epoch
@@ -162,10 +190,10 @@ def test(args, epoch, eval_alpha=0.5):
             im1, im2, gt = utils.build_input(images, imgpaths, is_training=False)
 
             # Forward
-            out, feats = model(im1, im2)
+            _ , out = s_net(im1, im2)
 
             # Save loss values
-            loss, loss_specific = criterion(out, gt, None, feats)
+            loss, loss_specific = criterion(out, gt, None, None)
             for k, v in losses.items():
                 if k != 'total':
                     v.update(loss_specific[k].item())
@@ -182,7 +210,7 @@ def test(args, epoch, eval_alpha=0.5):
                 print(imgpaths[1][-1])
 
             # Save result images
-            if ((epoch + 1) % 1 == 0 and i < 20) or args.mode == 'test':
+            if ((epoch + 1) % 1 == 0 and i < 3) or args.mode == 'test':
                 savepath = os.path.join('checkpoint', args.exp_name, save_folder)
 
                 for b in range(images[0].size(0)):
@@ -231,9 +259,11 @@ def main(args):
         # save checkpoint
         is_best = psnr > best_psnr
         best_psnr = max(psnr, best_psnr)
+        if is_best:
+            print("best: " ,epoch)
         utils.save_checkpoint({
             'epoch': epoch,
-            'state_dict': model.state_dict(),
+            'state_dict': s_net.state_dict(),
             'optimizer': optimizer.state_dict(),
             'best_psnr': best_psnr
         }, is_best, args.exp_name)

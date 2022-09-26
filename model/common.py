@@ -319,16 +319,21 @@ class Interpolation(nn.Module):
 
         self.tailConv = conv3x3(n_feats, n_feats)
 
-    def forward(self, x0, x1):
+    def forward(self, x0, x1):#([16, 192, 32, 32])
         # Build input tensor
-        x = torch.cat([x0, x1], dim=1)
-        x = self.headConv(x)
+        x = torch.cat([x0, x1], dim=1)#([16, 384, 32, 32])
+        x = self.headConv(x)#([16, 192, 32, 32])
 
-        res = self.body(x)
-        res += x
+        #res = self.body(x)#([16, 192, 32, 32])
+        feat1 = self.body[0](x)
+        feat2 = self.body[1](feat1)
+        feat3 = self.body[2](feat2)
+        feat4 = self.body[3](feat3)
+        feat5 = self.body[4](feat4)
+        res = feat5+x#([16, 192, 32, 32])
 
         out = self.tailConv(res)
-        return out
+        return out,[feat1,feat2,feat3,feat4,feat5]
 
 
 class Interpolation_res(nn.Module):
