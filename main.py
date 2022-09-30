@@ -51,7 +51,7 @@ elif args.model.lower() == 'cain':
     print("Building model: CAIN")
     
     t_net = CAIN(depth=args.depth)
-    
+    #print(t_net)
     state = torch.load("./pretrain/pretrained_cain.pth")
     from collections import OrderedDict
     new_state_dict = OrderedDict()
@@ -87,10 +87,10 @@ criterion = Loss(args)
 args.radam = False
 if args.radam:
     from radam import RAdam
-    optimizer = RAdam(list(s_net.parameters()) + list(d_net.module.Connectors.parameters()), lr=args.lr, betas=(args.beta1, args.beta2))
+    optimizer = RAdam(list(s_net.parameters()) , lr=args.lr, betas=(args.beta1, args.beta2))#+ list(d_net.module.Connectors.parameters())
 else:
     from torch.optim import Adam
-    optimizer = Adam(list(s_net.parameters()) + list(d_net.module.Connectors.parameters()), lr=args.lr, betas=(args.beta1, args.beta2))#+ list(d_net.module.Connectors.parameters()
+    optimizer = Adam(list(s_net.parameters()) , lr=args.lr, betas=(args.beta1, args.beta2))#+ list(d_net.module.Connectors.parameters())
 print('# of parameters: %d' % sum(p.numel() for p in s_net.parameters()))
 
 
@@ -130,7 +130,7 @@ def train(args, epoch):
         optimizer.zero_grad()
         out, loss_distill = d_net(im1, im2)
         loss, loss_specific = criterion(out, gt, None, None)
-        loss = loss + loss_distill.sum() / args.batch_size *1e-5#/ 10000
+        loss = loss*0 + loss_distill.sum() / args.batch_size *1e-4#/ 10000
         
         # Save loss values
         for k, v in losses.items():
@@ -190,7 +190,7 @@ def test(args, epoch, eval_alpha=0.5):
             im1, im2, gt = utils.build_input(images, imgpaths, is_training=False)
 
             # Forward
-            _ , out = s_net(im1, im2)
+            _ ,_, out = s_net(im1, im2)
 
             # Save loss values
             loss, loss_specific = criterion(out, gt, None, None)
@@ -273,3 +273,4 @@ def main(args):
 
 if __name__ == "__main__":
     main(args)
+

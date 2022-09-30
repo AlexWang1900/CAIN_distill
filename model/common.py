@@ -137,7 +137,7 @@ class CALayer(nn.Module):
         # feature channel downscale and upscale --> channel weight
         self.conv_du = nn.Sequential(
             nn.Conv2d(channel, channel // reduction, 1, padding=0, bias=True),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),#inplace=True
             nn.Conv2d(channel // reduction, channel, 1, padding=0, bias=True),
             nn.Sigmoid()
         )
@@ -189,9 +189,10 @@ class ResidualGroup(nn.Module):
         self.body = nn.Sequential(*modules_body)
 
     def forward(self, x):
-        res = self.body(x)
+        res_feat = self.body[:-1](x)
+        res = self.body[-1](res_feat)
         res += x
-        return res
+        return res,res_feat
 
 
 def pixel_shuffle(input, scale_factor):
@@ -323,17 +324,23 @@ class Interpolation(nn.Module):
         # Build input tensor
         x = torch.cat([x0, x1], dim=1)#([16, 384, 32, 32])
         x = self.headConv(x)#([16, 192, 32, 32])
-
+        head_feat = x
         #res = self.body(x)#([16, 192, 32, 32])
-        feat1 = self.body[0](x)
-        feat2 = self.body[1](feat1)
-        feat3 = self.body[2](feat2)
-        feat4 = self.body[3](feat3)
-        feat5 = self.body[4](feat4)
+        feat1,feat1_ = self.body[0](x)
+        #feat1+=x
+        feat2,feat2_ = self.body[1](feat1)
+        #feat2+=feat1
+        feat3,feat3_ = self.body[2](feat2)
+        #feat3+=feat2
+        feat4,feat4_ = self.body[3](feat3)
+        #feat4+=feat3
+        feat5,feat5_ = self.body[4](feat4)
+        #feat5+=feat4
         res = feat5+x#([16, 192, 32, 32])
 
         out = self.tailConv(res)
-        return out,[feat1,feat2,feat3,feat4,feat5]
+        tail_feat = out
+        return out,[feat1_,feat2_,feat3_,feat4_,feat5_,tail_feat],[feat1,feat2,feat3,feat4,feat5,head_feat]
 
 
 class Interpolation_res(nn.Module):
@@ -364,3 +371,4 @@ class Interpolation_res(nn.Module):
         x = self.tailConv(res)
 
         return x
+

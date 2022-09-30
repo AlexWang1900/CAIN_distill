@@ -16,7 +16,7 @@ class Encoder(nn.Module):
         # self.shuffler = nn.Sequential(*shuffler_list)
         self.shuffler = PixelShuffle(1 / 2**depth)
 
-        relu = nn.LeakyReLU(0.2, True)
+        relu = nn.LeakyReLU(0.2, False)
         self.n_resgrous = n_resgroups
         # FF_RCAN or FF_Resblocks
         self.interpolate = Interpolation(n_resgroups, n_resblocks, in_channels * (4**depth), act=relu)
@@ -28,9 +28,9 @@ class Encoder(nn.Module):
         feats1 = self.shuffler(x1)#([16, 192, 32, 32])
         feats2 = self.shuffler(x2)#([16, 192, 32, 32])
 
-        feats,feats_layers = self.interpolate(feats1, feats2)#([16, 192, 32, 32])
+        feats,feats_layers,feats_layers_1 = self.interpolate(feats1, feats2)#([16, 192, 32, 32])
 
-        return feats,feats_layers
+        return feats,feats_layers,feats_layers_1
 
 
 class Decoder(nn.Module):
@@ -59,22 +59,22 @@ class CAIN(nn.Module):
     def forward(self, x1, x2):
         x1, m1 = sub_mean(x1)
         x2, m2 = sub_mean(x2)
-
+        """
         if not self.training:
             paddingInput, paddingOutput = InOutPaddings(x1)
             x1 = paddingInput(x1)
             x2 = paddingInput(x2)
-
-        feats,feats_layers = self.encoder(x1, x2)
+        """
+        feats,feats_layers,feats_layers_1 = self.encoder(x1, x2)
         out = self.decoder(feats)
-
+        """
         if not self.training:
             out = paddingOutput(out)
-
+        """
         mi = (m1 + m2) / 2
         out += mi
 
-        return feats_layers,out
+        return feats_layers,feats_layers_1,out
 
 def build_feature_connector(t_channel, s_channel):
     C = [nn.Conv2d(s_channel, t_channel, kernel_size=1, stride=1, padding=0, bias=False)]
@@ -104,7 +104,7 @@ class Distiller(nn.Module):
         s_channels = s_net.get_channel_num()
 
         #self.Connectors = nn.ModuleList([build_feature_connector(t, s) for t, s in zip(t_channels, s_channels)])
-        self.Connectors = nn.ModuleList([nn.LayerNorm([192,32,32]) for i in t_channels])
+        #self.Connectors = nn.ModuleList([nn.LayerNorm([192,32,32]) for i in t_channels])
         #teacher_bns = t_net.get_bn_before_relu()
         #margins = [get_margin_from_BN(bn) for bn in teacher_bns]
         #for i, margin in enumerate(margins):
@@ -115,13 +115,13 @@ class Distiller(nn.Module):
 
     def forward(self, x1,x2):
         with torch.no_grad():
-            t_feats, t_out = self.t_net(x1,x2)
-        s_feats, s_out = self.s_net(x1,x2)
+            t_feats,t_feats_1, t_out = self.t_net(x1,x2)
+        s_feats,s_feats_1, s_out = self.s_net(x1,x2)
         feat_num = len(t_feats)
         
         loss_distill = 0
         for i in range(feat_num):
             #s_feats[i] = self.Connectors[i](s_feats[i])
-            loss_distill += distillation_loss(self.Connectors[i](s_feats[i]), self.Connectors[i](t_feats[i]).detach())#/ 2 ** (feat_num - i - 1)
-
+            loss_distill += distillation_loss(s_feats[i], t_feats[i].detach())#/ 2 ** (feat_num - i - 1)
+            loss_distill += distillation_loss(s_feats_1[i], t_feats_1[i].detach())
         return s_out, loss_distill

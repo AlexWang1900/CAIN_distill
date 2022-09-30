@@ -13,3 +13,4 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --lr 0.0002 \
     --log_iter 100 \
 #    --mode test
+
